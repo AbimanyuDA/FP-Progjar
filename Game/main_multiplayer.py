@@ -92,67 +92,137 @@ def main():
     walls.append(pygame.Rect(0, 210*scaling_factor, 160*scaling_factor, 5*scaling_factor))
 
     # --- Multiplayer Setup ---
-    client = ClientInterface()
-    player_id = input("Enter your player ID (e.g., 1, 2): ")
+    print("Knight Multiplayer Game - Client")
+    print("=================================")
+    
+    # Test server connection first
+    server_ip = input("Enter server IP [127.0.0.1]: ").strip() or "127.0.0.1"
+    server_port = 8889
+    
+    print(f"Connecting to server {server_ip}:{server_port}...")
+    client = ClientInterface((server_ip, server_port))
+    
+    # Test connection
+    try:
+        test_result = client.get_all_player_ids()
+        print(f"✓ Server connected successfully! Current players: {test_result}")
+    except Exception as e:
+        print(f"✗ Cannot connect to server: {e}")
+        print("Make sure server is running with: python server_thread_http.py")
+        input("Press Enter to continue anyway or Ctrl+C to exit...")
+    
+    player_id = input("Enter your player ID (e.g., 1, 2): ").strip()
+    if not player_id:
+        player_id = "player1"
+        print(f"Using default ID: {player_id}")
+    
+    print(f"Starting game as player: {player_id}")
+    print("Controls: Arrow keys = Move, X = Attack, Close window = Quit")
+    print("=" * 50)
 
     # Create the local player
-    local_player = Player(id=player_id, x=100, y=100, 
-                          animation_folder=KNIGHT_ANIMATION_FOLDER, 
-                          client_interface=client, is_remote=False)
+    try:
+        local_player = Player(id=player_id, x=100, y=100, 
+                              animation_folder=KNIGHT_ANIMATION_FOLDER, 
+                              client_interface=client, is_remote=False)
+        print(f"✓ Player {player_id} created successfully")
+    except Exception as e:
+        print(f"✗ Error creating player: {e}")
+        print("Check if assets/images/knight/ folder exists and contains animation files")
+        input("Press Enter to exit...")
+        return
 
     # Dictionary to hold all players
     all_players = {player_id: local_player}
 
     # --- Game Loop ---
+    print("Starting game loop...")
     running = True
+    frame_count = 0
+    
     while running:
         dt = clock.tick(FPS) / 1000.0
+        frame_count += 1
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                print("Game quit requested")
                 running = False
 
         # --- Update Remote Players ---
-        # Dapatkan daftar semua ID pemain dari server
-        all_ids_from_server = client.get_all_player_ids()
-        # Tambahkan pemain baru yang belum ada di 'all_players'
-        for p_id in all_ids_from_server:
-            if p_id not in all_players:
-                print(f"New player {p_id} has joined.")
-                all_players[p_id] = Player(id=p_id, x=0, y=0, 
-                                           animation_folder=KNIGHT_ANIMATION_FOLDER, 
-                                           client_interface=client, is_remote=True)
-        
-        # Hapus pemain yang keluar
-        current_ids_in_game = list(all_players.keys())
-        for p_id in current_ids_in_game:
-            if p_id not in all_ids_from_server and p_id != player_id:
-                print(f"Player {p_id} has left.")
-                del all_players[p_id]
+        try:
+            # Dapatkan daftar semua ID pemain dari server
+            all_ids_from_server = client.get_all_player_ids()
+            
+            # Tambahkan pemain baru yang belum ada di 'all_players'
+            for p_id in all_ids_from_server:
+                if p_id not in all_players:
+                    print(f"New player {p_id} has joined.")
+                    try:
+                        all_players[p_id] = Player(id=p_id, x=200, y=200, 
+                                                   animation_folder=KNIGHT_ANIMATION_FOLDER, 
+                                                   client_interface=client, is_remote=True)
+                    except Exception as e:
+                        print(f"Error creating remote player {p_id}: {e}")
+            
+            # Hapus pemain yang keluar
+            current_ids_in_game = list(all_players.keys())
+            for p_id in current_ids_in_game:
+                if p_id not in all_ids_from_server and p_id != player_id:
+                    print(f"Player {p_id} has left.")
+                    del all_players[p_id]
+        except Exception as e:
+            if frame_count % 300 == 0:  # Print error every 5 seconds
+                print(f"Server communication error: {e}")
 
         # --- Update All Players ---
-        for p in all_players.values():
-            p.update(dt, walls, list(all_players.values()))
+        try:
+            for p in all_players.values():
+                p.update(dt, walls, list(all_players.values()))
+        except Exception as e:
+            print(f"Player update error: {e}")
 
         # --- Drawing ---
-        if background_image:
-            screen.blit(background_image, (0, 0))
-        else:
-            screen.fill(BLACK)
+        try:
+            if background_image:
+                screen.blit(background_image, (0, 0))
+            else:
+                screen.fill(BLACK)
 
-        for wall in walls:
-            pygame.draw.rect(screen, BLUE, wall)
+            # Draw walls (commented out for cleaner look)
+            # for wall in walls:
+            #     pygame.draw.rect(screen, BLUE, wall)
 
-        for p in all_players.values():
-            p.draw(screen)
+            for p in all_players.values():
+                p.draw(screen)
 
-        # Draw the local player's health bar
-        if player_id in all_players:
-            all_players[player_id].draw_health(screen)
+            # Draw the local player's health bar
+            if player_id in all_players:
+                all_players[player_id].draw_health(screen)
+            
+            # Draw debug info
+            if frame_count % 60 == 0:  # Every second
+                debug_text = f"Players: {len(all_players)}, Frame: {frame_count}"
+                print(debug_text)
 
-        pygame.display.flip()
+            pygame.display.flip()
+            
+        except Exception as e:
+            print(f"Drawing error: {e}")
+            # Fill screen with red to indicate error
+            screen.fill((255, 0, 0))
+            pygame.display.flip()
 
+    print("Cleaning up...")
+    try:
+        # Remove player from server
+        client.send_command(f"remove_player {player_id}")
+        print(f"Player {player_id} removed from server")
+    except:
+        pass
+    
     pygame.quit()
+    print("Game ended")
     sys.exit()
 
 if __name__ == '__main__':
