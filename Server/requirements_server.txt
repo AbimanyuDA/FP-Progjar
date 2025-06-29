@@ -1,0 +1,66 @@
+# Knight Game Server Requirements
+
+## Python Dependencies
+- No external dependencies required
+- Uses only Python standard library:
+  - socket
+  - threading  
+  - json
+  - time
+  - logging
+  - argparse
+  - concurrent.futures
+
+## System Requirements
+- Python 3.6+
+- Windows/Linux/MacOS
+- Minimum 512MB RAM
+- Network connectivity
+
+## Recommended Specifications
+
+### Development Environment
+- Python 3.8+
+- 1GB RAM
+- Single core sufficient
+
+### Production Environment (< 50 players)
+- Python 3.8+
+- 2GB RAM
+- 2 CPU cores
+- Stable network connection
+
+### High Load Environment (50-200 players)
+- Python 3.9+
+- 4GB RAM
+- 4+ CPU cores
+- Load balancer with multiple instances
+- Fast network (low latency)
+
+### Maximum Performance (200+ players)
+- Python 3.10+
+- 8GB+ RAM
+- 8+ CPU cores
+- Multiple server instances with load balancer
+- Dedicated server hardware
+- Redis/Database for shared state (future enhancement)
+
+## Installation
+No installation required - all dependencies are built into Python standard library.
+
+## Quick Start
+```bash
+# Clone/download the Knight game
+cd Knight/Server
+
+# Start basic server
+python server_thread_http.py
+
+# Or use startup scripts
+# Windows:
+start_server.bat
+
+# Linux/Mac:
+chmod +x start_server.sh
+./start_server.sh
+```
