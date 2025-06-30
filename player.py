@@ -2,11 +2,25 @@ import pygame
 import os
 
 class Player(pygame.sprite.Sprite):
-    def __init__(self, id, x, y, animation_folder, client_interface, is_remote=False):
+    def __init__(self, id, x, y, animation_folder, client_interface, is_remote=False, is_ai=False):
         super().__init__()
         self.id = id
         self.client_interface = client_interface
         self.is_remote = is_remote
+        self.is_ai = is_ai  # New AI flag
+
+        # AI-specific attributes
+        if self.is_ai:
+            self.ai_state = "idle"  # idle, chase, attack, flee
+            self.ai_timer = 0
+            self.ai_decision_interval = 0.5  # Make decisions every 0.5 seconds
+            self.ai_target = None
+            self.ai_attack_range = 60
+            self.ai_flee_distance = 80
+            self.ai_chase_distance = 150
+            self.ai_move_timer = 0
+            self.ai_move_direction = pygame.math.Vector2(0, 0)
+            self.ai_move_duration = 1.0  # Move in one direction for 1 second
 
         self.sword_image = pygame.image.load('assets/images/sword.png').convert_alpha()
         self.sword_image = pygame.transform.scale(self.sword_image, (self.sword_image.get_width() * 2, self.sword_image.get_height() * 2))
@@ -91,6 +105,30 @@ class Player(pygame.sprite.Sprite):
             if state:
                 self.update_from_state(state)
             self.update_animation(dt, moving=True) 
+        elif self.is_ai:
+            # AI behavior
+            self.update_ai(dt, walls, all_players)
+            
+            # Handle AI attack timing
+            if self.is_attacking:
+                self.attack_timer += dt
+                self.perform_attack(all_players)
+                if self.attack_timer >= self.attack_duration:
+                    self.is_attacking = False
+
+            # Handle AI hit recovery
+            if self.is_hit:
+                self.hit_timer += dt
+                if self.hit_timer >= self.hit_duration:
+                    self.is_hit = False
+                    self.hit_timer = 0
+
+            # Apply movement and collision for AI
+            self.rect.x += self.velocity.x * dt
+            self.handle_collision(walls, 'horizontal')
+            self.rect.y += self.velocity.y * dt
+            self.handle_collision(walls, 'vertical')
+            self.update_animation(dt, moving=(self.velocity.length() > 0))
         else:
 
             keys = pygame.key.get_pressed()
@@ -268,7 +306,7 @@ class Player(pygame.sprite.Sprite):
 
     def draw_enemy_health_bar(self, screen):
         """Draw simple horizontal health bar above enemy players only."""
-        if not self.is_remote:
+        if not self.is_remote and not self.is_ai:
             return
         
         bar_width = 50
@@ -297,3 +335,134 @@ class Player(pygame.sprite.Sprite):
         self.rect.topleft = (x, y)
         self.is_hit = False
         self.is_attacking = False
+        
+        # Reset AI state on respawn
+        if self.is_ai:
+            self.ai_state = "idle"
+            self.ai_timer = 0
+            self.ai_move_timer = 0
+            self.ai_move_direction = pygame.math.Vector2(0, 0)
+
+    def update_ai(self, dt, walls, all_players):
+        """AI behavior update logic"""
+        if not self.is_ai or self.health <= 0:
+            return
+            
+        self.ai_timer += dt
+        self.ai_move_timer += dt
+        
+        # Find the closest human player as target
+        closest_player = None
+        closest_distance = float('inf')
+        
+        for player in all_players:
+            if player.id != self.id and not player.is_ai and player.health > 0:
+                distance = pygame.math.Vector2(player.rect.center).distance_to(self.rect.center)
+                if distance < closest_distance:
+                    closest_distance = distance
+                    closest_player = player
+        
+        self.ai_target = closest_player
+        
+        # Make AI decisions every interval
+        if self.ai_timer >= self.ai_decision_interval:
+            self.ai_timer = 0
+            self.make_ai_decision(closest_distance)
+        
+        # Execute current AI behavior
+        self.execute_ai_behavior(dt, walls, all_players)
+    
+    def make_ai_decision(self, distance_to_target):
+        """Make AI decision based on current situation"""
+        if not self.ai_target:
+            self.ai_state = "idle"
+            return
+            
+        # Decision making based on distance and health
+        if self.health <= 2:  # Low health - be more defensive
+            if distance_to_target < self.ai_flee_distance:
+                self.ai_state = "flee"
+            else:
+                self.ai_state = "idle"
+        else:  # Normal/high health - be more aggressive
+            if distance_to_target <= self.ai_attack_range:
+                self.ai_state = "attack"
+            elif distance_to_target <= self.ai_chase_distance:
+                self.ai_state = "chase"
+            else:
+                self.ai_state = "idle"
+    
+    def execute_ai_behavior(self, dt, walls, all_players):
+        """Execute the current AI behavior"""
+        if not self.ai_target:
+            return
+            
+        target_pos = pygame.math.Vector2(self.ai_target.rect.center)
+        ai_pos = pygame.math.Vector2(self.rect.center)
+        
+        if self.ai_state == "chase":
+            # Move towards target
+            direction = (target_pos - ai_pos).normalize()
+            self.velocity = direction * self.speed
+            self.facing_right = direction.x > 0
+            
+        elif self.ai_state == "flee":
+            # Move away from target
+            direction = (ai_pos - target_pos).normalize()
+            self.velocity = direction * self.speed * 1.2  # Flee faster
+            self.facing_right = direction.x > 0
+            
+        elif self.ai_state == "attack":
+            # Face target and attack
+            direction = target_pos - ai_pos
+            self.facing_right = direction.x > 0
+            
+            # Attack if not already attacking
+            if not self.is_attacking:
+                self.is_attacking = True
+                self.attack_timer = 0
+                self.hit_during_attack.clear()
+                
+            # Move slightly towards target while attacking
+            if direction.length() > 0:
+                direction = direction.normalize()
+                self.velocity = direction * self.speed * 0.3
+                
+        elif self.ai_state == "idle":
+            # Random movement or stay still
+            if self.ai_move_timer >= self.ai_move_duration:
+                self.ai_move_timer = 0
+                # Choose random direction or stay still
+                import random
+                if random.random() < 0.7:  # 70% chance to move
+                    angle = random.uniform(0, 2 * 3.14159)
+                    self.ai_move_direction = pygame.math.Vector2(
+                        pygame.math.cos(angle), 
+                        pygame.math.sin(angle)
+                    )
+                    self.facing_right = self.ai_move_direction.x > 0
+                else:
+                    self.ai_move_direction = pygame.math.Vector2(0, 0)
+                    
+            self.velocity = self.ai_move_direction * self.speed * 0.5
+
+    def set_ai_difficulty(self, difficulty="normal"):
+        """Set AI difficulty level"""
+        if not self.is_ai:
+            return
+            
+        if difficulty == "easy":
+            self.ai_decision_interval = 0.8
+            self.speed = 150
+            self.ai_attack_range = 50
+            self.ai_chase_distance = 120
+        elif difficulty == "normal":
+            self.ai_decision_interval = 0.5
+            self.speed = 200
+            self.ai_attack_range = 60
+            self.ai_chase_distance = 150
+        elif difficulty == "hard":
+            self.ai_decision_interval = 0.3
+            self.speed = 250
+            self.ai_attack_range = 70
+            self.ai_chase_distance = 180
